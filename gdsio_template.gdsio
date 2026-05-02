@@ -1,0 +1,10 @@
+[global]
+name={name}
+xfer_type={xfer_type}
+rw={rw}
+bs={bs}
+size={size}
+runtime={runtime}
+do_verify={do_verify}
+
+{jobs}
