@@ -1,11 +1,12 @@
 # gdsio quick start
 
-This repo now uses:
+This repo uses:
 
-- `run_all_gdsio.py`: one Python runner with the full benchmark matrix embedded directly in the script
-- `gdsio_template.gdsio`: a readable template showing the generated config format
+- `run_all_gdsio.py`: a Python runner that executes existing `.gdsio` config files, one case at a time, with `iostat` and `gds_stat` collection
+- `gdsio_cases/main/`: the 48-case workload matrix
+- `gdsio_cases/topology/`: the 16-case per-GPU topology subset
 
-The runner generates temporary `.gdsio` configs on the fly, so there is no separate config file for each test and no CSV to parse.
+Each benchmark case is a separate `.gdsio` file. The runner does not generate temporary configs.
 
 ## 1) Prerequisites
 
@@ -17,7 +18,7 @@ The runner generates temporary `.gdsio` configs on the fly, so there is no separ
 
 ## 2) Benchmark matrix
 
-The script contains two suites:
+The case files are split into two suites:
 
 - `main`: all 4 GPUs active together
 - `topology`: one GPU active at a time for path comparison
@@ -42,21 +43,25 @@ The `topology` suite contains:
 
 That gives `2 x 1 x 2 x 1 x 4 = 16` cases.
 
-## 3) List cases
-
-```bash
-python3 run_all_gdsio.py --list
-python3 run_all_gdsio.py --list --suite main
-python3 run_all_gdsio.py --list --suite topology
-```
-
-## 4) Run cases
+## 3) Run cases
 
 ```bash
 python3 run_all_gdsio.py
 python3 run_all_gdsio.py --suite main
 python3 run_all_gdsio.py --suite topology
 ```
+
+The runner discovers `.gdsio` files in `gdsio_cases/main/` and `gdsio_cases/topology/`.
+
+## 4) Results
+
+Each run writes raw per-case logs into `logs/`:
+
+- `<case>.<timestamp>.gdsio.log`
+- `<case>.<timestamp>.iostat.log`
+- `<case>.<timestamp>.gds_stat.log`
+
+Nothing is converted or summarized by the runner. Use the raw tool output later for throughput, CPU utilization, latency, and IOPS analysis.
 
 ## 5) Paper-aligned runs
 
@@ -75,11 +80,11 @@ python3 run_all_gdsio.py --suite topology
 The script uses these built-in defaults:
 
 - `gdsio` binary: `/usr/local/cuda/gds/tools/gdsio`
-- template file: `gdsio_template.gdsio`
+- case directory: `gdsio_cases`
 - log directory: `logs`
-- runtime: `60`
-- `do_verify`: `0`
+- `iostat` command: `iostat 1`
+- `gds_stat` command: tries `gds_stats -l 1`, then `gds_stat -l 1`
 
 ## 6) Edit the suite
 
-Edit the `CASES` array in [run_all_gdsio.py](/Users/olliglorioso/Documents/CTHPC/run_all_gdsio.py).
+Edit, add, or remove `.gdsio` files under [gdsio_cases](/Users/olliglorioso/Documents/CTHPC/gdsio_cases). The filename stem becomes the case ID used in log filenames.
