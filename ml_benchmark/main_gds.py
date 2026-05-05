@@ -13,19 +13,19 @@ data_dir_2d = os.path.join(dali_extra_dir, 'db', '3D', 'MRI', 'Knee', 'npy_2d_sl
 data_dir_3d = os.path.join(dali_extra_dir, 'db', '3D', 'MRI', 'Knee', 'npy_3d', 'STU00001')
 
 data_dir = os.path.join(data_dir_2d, 'SER00001')
+files = sorted([f for f in os.listdir(data_dir) if '.npy' in f])
 
-# Nongds reading
+# gds reading
 @pipeline_def(batch_size=batch_size, num_threads=3, device_id=0)
-def pipe1():
-    data = fn.readers.numpy(device='cpu', file_root=data_dir, file_filter='*.npy')
+def pipe_gds():
+    data = fn.readers.numpy(device='gpu', file_root=data_dir, files=files)
     return data
 
-def run(p):
-    p.build()  # build the pipeline
-    outputs = p.run()  # Run once
-    # Getting the batch as a list of numpy arrays, for displaying
-    batch = [np.array(outputs[0][s]) for s in range(min(len(outputs[0]), batch_size))]
-    return batch
+p = pipe_gds()
+p.build()
+pipe_out = p.run()
 
-data1 = run(pipe1())
-print(data1, "lenght: ", len(data1))
+data_gds = pipe_out[0].as_cpu().as_array()  # as_cpu() to copy the data back to CPU memory
+print(data_gds.shape)
+plot_batch(data_gds)
+
