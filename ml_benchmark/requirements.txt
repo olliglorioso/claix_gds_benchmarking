@@ -1,0 +1,4 @@
+--extra-index-url https://pypi.nvidia.com
+
+nvidia-cuda-runtime-cu12
+nvidia-dali-cuda120

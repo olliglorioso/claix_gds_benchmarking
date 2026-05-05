@@ -1,0 +1,36 @@
+[global]
+name=beeond_h100_main_seqwrite_nogds_bs4k_size32g_gpuall
+xfer_type=1
+rw=seqwrite
+bs=4K
+size=32G
+runtime=60
+do_verify=0
+
+[job1]
+# H100 GPU 0
+numa_node=0
+gpu_dev_id=0
+num_threads=8
+directory=$BEEOND/gds_dir/gpu0
+
+[job2]
+# H100 GPU 1
+numa_node=0
+gpu_dev_id=1
+num_threads=8
+directory=$BEEOND/gds_dir/gpu1
+
+[job3]
+# H100 GPU 2
+numa_node=0
+gpu_dev_id=2
+num_threads=8
+directory=$BEEOND/gds_dir/gpu2
+
+[job4]
+# H100 GPU 3
+numa_node=0
+gpu_dev_id=3
+num_threads=8
+directory=$BEEOND/gds_dir/gpu3
