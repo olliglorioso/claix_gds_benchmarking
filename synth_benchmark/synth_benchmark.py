@@ -2,9 +2,7 @@ import subprocess
 import argparse
 import os
 import pandas as pd
-import seaborn as sns
 import itertools
-plt.style.use('seaborn')
 
 load_type = {'SEQ_READ': 0, 'SEQ_WRITE':1, 'RAND_READ': 2, 'RAND_WRITE': 3}
 transfer_type = {'GDS': 0, 'NONGDS': 2, 'PAGECACHE': 4}
@@ -45,7 +43,7 @@ transfer_type = {'GDS': 0, 'NONGDS': 2, 'PAGECACHE': 4}
 
 
 def init_gds_files(gdsio_path, output_dir, file_size, device, workers):
-    cmd = ['sudo', gdsio_path, '-D', output_dir, '-d', device, '-T', '1', '-s', file_size, '-w', workers, '-I', 3]
+    cmd = [gdsio_path, '-D', output_dir, '-d', device, '-T', '1', '-s', file_size, '-w', workers, '-I', 3]
     cmd = [str(x) for x in cmd]
     subprocess.run(cmd)
 
@@ -100,7 +98,7 @@ def main(gdsio_path, output_dir):
             if not os.path.isfile(os.path.join(output_dir, f'gdsio.{thread - 1}')):
                 init_gds_files(gdsio_path, output_dir, file_size, dev, thread)
 
-            base_cmd = ['sudo', gdsio_path, '-D', output_dir, '-T', time, '-s', file_size]
+            base_cmd = [gdsio_path, '-D', output_dir, '-T', time, '-s', file_size]
             new_cmd = base_cmd + ['-i', io_size, '-w', thread, '-x', transfer_type[trans_name], '-I', load_type[load], '-d', dev, '-n', numa]
             
             if use_nvlink:
