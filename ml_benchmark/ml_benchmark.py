@@ -1,151 +1,361 @@
 from tqdm import tqdm
 import torch
-import torch.nn as nn
 import time
 import os
-import gc
 from torch._subclasses.fake_tensor import FakeTensorMode
 from torch.serialization import skip_data
-
-import torch
 from torch.utils.serialization import config as serialization_config
 
+# ============================================================
+# CONFIG
+# ============================================================
+
+MODEL_SIZE_GB = 2.0
+ITERATIONS = 5
+
+STD_PATH = "model_std.pt"
+GDS_PATH = "model_gds.pt"
+
+# Required for GPUDirect Storage
 serialization_config.save.storage_alignment = 4096
+
+# ============================================================
+# MODEL CREATION
+# ============================================================
+
 def create_heavy_model(size_gb):
-    """Creates a model with roughly the requested size in GB (using FP32)."""
-    # 1 parameter (FP32) = 4 bytes. 
-    # Size in bytes = size_gb * 1024^3.
-    num_params = int((size_gb * (1024**3)) / 4)
-    print(f"Creating model with {num_params:,} parameters (~{size_gb} GB)...")
-    
-    # We use a simple list of large tensors to simulate a state_dict
-    model_tensors = {
-        f"layer_{i}": torch.randn(num_params // 10, device='cuda') 
-        for i in range(10)
-    }
-    print(model_tensors, "model tensors")
-    return model_tensors
-
-def get_checkpoint_offsets(path):
-
+    """
+    Creates a large GPU state_dict approximately equal to size_gb.
     """
 
-    Uses FakeTensorMode to identify where each tensor's data
+    # FP32 = 4 bytes
+    total_params = int((size_gb * (1024 ** 3)) / 4)
 
-    is located within the checkpoint file.
+    print(f"Creating model with {total_params:,} parameters (~{size_gb} GB)...")
 
+    model_tensors = {
+        f"layer_{i}": torch.randn(
+            total_params // 10,
+            device="cuda",
+            dtype=torch.float32,
+        )
+        for i in range(10)
+    }
+
+    return model_tensors
+
+
+# ============================================================
+# CHECKPOINT OFFSETS
+# ============================================================
+
+def get_checkpoint_offsets(path):
+    """
+    Uses FakeTensorMode to get storage offsets
+    inside the checkpoint file.
     """
 
     with FakeTensorMode():
-
-        fake_state_dict = torch.load(path, weights_only=True)
+        fake_state_dict = torch.load(
+            path,
+            weights_only=True,
+        )
 
     offsets = {}
-    for name, tensor in fake_state_dict.items():
-        storage = tensor.untyped_storage()
-        if hasattr(storage, "_checkpoint_offset"):
-            offsets[name] = storage._checkpoint_offset
-        else:
-            print("NO OFFSET FOUND")
 
+    for name, tensor in fake_state_dict.items():
+
+        storage = tensor.untyped_storage()
+
+        if not hasattr(storage, "_checkpoint_offset"):
+            raise RuntimeError(
+                f"No checkpoint offset found for tensor: {name}"
+            )
+
+        offsets[name] = storage._checkpoint_offset
 
     return offsets
-# ================= BENCHMARK FUNCTIONS =================
+
+
+# ============================================================
+# STANDARD PYTORCH BENCHMARK
+# ============================================================
 
 def benchmark_standard(state_dict, path, iterations):
+
     print(f"\n--- Benchmarking Standard PyTorch ({iterations} iterations) ---")
-    
-    # Save Benchmark
-    start_save = time.time()
+
+    # --------------------------------------------------------
+    # SAVE
+    # --------------------------------------------------------
+
+    save_times = []
+
     for _ in tqdm(range(iterations), desc="Standard Save"):
 
+        torch.cuda.synchronize()
+
+        start = time.time()
+
         torch.save(state_dict, path)
-    end_save = time.time()
-    
-    # Load Benchmark
-    start_load = time.time()
+
+        torch.cuda.synchronize()
+
+        end = time.time()
+
+        save_times.append(end - start)
+
+    # --------------------------------------------------------
+    # LOAD
+    # --------------------------------------------------------
+
+    load_times = []
+
     for _ in tqdm(range(iterations), desc="Standard Load"):
-        _ = torch.load(path, map_location="cuda", weights_only=True)
-    end_load = time.time()
-    
-    return (end_save - start_save) / iterations, (end_load - start_load) / iterations
+
+        torch.cuda.synchronize()
+
+        start = time.time()
+
+        loaded = torch.load(
+            path,
+            map_location="cuda",
+            weights_only=True,
+        )
+
+        torch.cuda.synchronize()
+
+        end = time.time()
+
+        load_times.append(end - start)
+
+        del loaded
+
+    avg_save = sum(save_times) / len(save_times)
+    avg_load = sum(load_times) / len(load_times)
+
+    return avg_save, avg_load
+
+
+# ============================================================
+# GPUDIRECT STORAGE BENCHMARK
+# ============================================================
 
 def benchmark_gds(state_dict, path, iterations):
+
     print(f"\n--- Benchmarking GDS Prototype ({iterations} iterations) ---")
-    
-    # 1. PRE-STEP: Reserve space and get offsets (only needed once)
+
+    # --------------------------------------------------------
+    # CREATE CHECKPOINT SKELETON
+    # --------------------------------------------------------
+
+    print("Preparing checkpoint skeleton...")
+
     with skip_data():
         torch.save(state_dict, path)
+
     offsets = get_checkpoint_offsets(path)
-    
-    # 2. GDS SAVE BENCHMARK
-    for _ in tqdm(range(iterations), desc="GDS Save"):
 
-        gds_file = torch.cuda.gds.GdsFile(path, os.O_WRONLY)
+    # --------------------------------------------------------
+    # GDS SAVE
+    # --------------------------------------------------------
 
-        for name, tensor in tqdm(
-            state_dict.items(),
-            desc="Writing tensors",
-            leave=False,
-        ):
-            gds_file.save_storage(
-                tensor.untyped_storage(),
-                offset=offsets[name],
-            )
+    save_times = []
+
+    gds_file = torch.cuda.gds.GdsFile(path, os.O_RDWR)
+
+    try:
+
+        for _ in tqdm(range(iterations), desc="GDS Save"):
+
+            torch.cuda.synchronize()
+
+            start = time.time()
+
+            for name, tensor in state_dict.items():
+
+                gds_file.save_storage(
+                    tensor.untyped_storage(),
+                    offsets[name],
+                )
+
+            torch.cuda.synchronize()
+
+            end = time.time()
+
+            save_times.append(end - start)
+
+    finally:
+        del gds_file
+
+    # --------------------------------------------------------
+    # GDS LOAD
+    # --------------------------------------------------------
+
+    load_times = []
+
+    gds_file = torch.cuda.gds.GdsFile(path, os.O_RDONLY)
+
+    try:
+
+        for _ in tqdm(range(iterations), desc="GDS Load"):
+
+            # Create empty tensors only
+            with skip_data():
+                loaded_dict = torch.load(
+                    path,
+                    weights_only=True,
+                )
+
+            torch.cuda.synchronize()
+
+            start = time.time()
+
+            for name, tensor in loaded_dict.items():
+
+                gds_file.load_storage(
+                    tensor.untyped_storage(),
+                    offsets[name],
+                )
+
+            torch.cuda.synchronize()
+
+            end = time.time()
+
+            load_times.append(end - start)
+
+            # Correctness validation
+            for k in state_dict:
+
+                if not torch.equal(
+                    state_dict[k],
+                    loaded_dict[k],
+                ):
+                    raise RuntimeError(
+                        f"Mismatch detected in tensor: {k}"
+                    )
+
+            del loaded_dict
+
+    finally:
+        del gds_file
+
+    avg_save = sum(save_times) / len(save_times)
+    avg_load = sum(load_times) / len(load_times)
+
+    return avg_save, avg_load
 
 
-    # 3. GDS LOAD BENCHMARK
-    for _ in tqdm(range(iterations), desc="GDS Load"):
+# ============================================================
+# RESULTS
+# ============================================================
 
-        with skip_data():
-            loaded_dict = torch.load(path, weights_only=True)
+def print_results(
+    model_size_gb,
+    std_save,
+    std_load,
+    gds_save,
+    gds_load,
+):
 
-        gds_file = torch.cuda.gds.GdsFile(path, os.O_RDONLY)
+    print("\n" + "=" * 50)
+    print(f"RESULTS ({model_size_gb} GB)")
+    print("=" * 50)
 
-        for name, tensor in tqdm(
-            loaded_dict.items(),
-            desc="Loading tensors",
-            leave=False,
-        ):
-            gds_file.load_storage(
-                tensor.untyped_storage(),
-                offset=offsets[name],
-            )
-    end_save = time.time()
+    print(f"Standard Save : {std_save:.4f} s")
+    print(f"GDS Save      : {gds_save:.4f} s")
 
-    return (end_save - start_save) / iterations, (end_load - start_load) / iterations
+    print()
 
-# ================= EXECUTION =================
+    print(f"Standard Load : {std_load:.4f} s")
+    print(f"GDS Load      : {gds_load:.4f} s")
+
+    print("-" * 50)
+
+    print(f"Save Speedup  : {std_save / gds_save:.2f}x")
+    print(f"Load Speedup  : {std_load / gds_load:.2f}x")
+
+    print("-" * 50)
+
+    std_save_bw = model_size_gb / std_save
+    gds_save_bw = model_size_gb / gds_save
+
+    std_load_bw = model_size_gb / std_load
+    gds_load_bw = model_size_gb / gds_load
+
+    print(f"Standard Save BW : {std_save_bw:.2f} GB/s")
+    print(f"GDS Save BW      : {gds_save_bw:.2f} GB/s")
+
+    print()
+
+    print(f"Standard Load BW : {std_load_bw:.2f} GB/s")
+    print(f"GDS Load BW      : {gds_load_bw:.2f} GB/s")
+
+    print("=" * 50)
+
+
+# ============================================================
+# MAIN
+# ============================================================
 
 if __name__ == "__main__":
-    MODEL_SIZE_GB = 2.0  # Adjust as needed
-    ITERATIONS = 5
-    STD_PATH = "model_std.pt"
-    GDS_PATH = "model_gds.pt"
 
     if not torch.cuda.is_available():
-        print("CUDA not found. GDS requires a GPU node.")
-        exit()
+        raise RuntimeError("CUDA not available.")
 
-    # Create dummy data
+    if not hasattr(torch.cuda, "gds"):
+        raise RuntimeError(
+            "torch.cuda.gds not available.\n"
+            "Requires PyTorch >= 2.7 with GDS support."
+        )
+
+    # --------------------------------------------------------
+    # CREATE MODEL
+    # --------------------------------------------------------
+
     my_model = create_heavy_model(MODEL_SIZE_GB)
 
-    # Run Standard
-    std_s, std_l = benchmark_standard(my_model, STD_PATH, ITERATIONS)
-    
-    # Run GDS
-    gds_s, gds_l = benchmark_gds(my_model, GDS_PATH, ITERATIONS)
+    torch.cuda.synchronize()
 
-    # Cleanup files
+    # --------------------------------------------------------
+    # STANDARD BENCHMARK
+    # --------------------------------------------------------
+
+    std_s, std_l = benchmark_standard(
+        my_model,
+        STD_PATH,
+        ITERATIONS,
+    )
+
+    # --------------------------------------------------------
+    # GDS BENCHMARK
+    # --------------------------------------------------------
+
+    gds_s, gds_l = benchmark_gds(
+        my_model,
+        GDS_PATH,
+        ITERATIONS,
+    )
+
+    # --------------------------------------------------------
+    # RESULTS
+    # --------------------------------------------------------
+
+    print_results(
+        MODEL_SIZE_GB,
+        std_s,
+        std_l,
+        gds_s,
+        gds_l,
+    )
+
+    # --------------------------------------------------------
+    # CLEANUP
+    # --------------------------------------------------------
+
     for p in [STD_PATH, GDS_PATH]:
-        if os.path.exists(p): os.remove(p)
 
-    # Results
-    print("\n" + "="*30)
-    print(f"RESULTS ({MODEL_SIZE_GB} GB File)")
-    print("="*30)
-    print(f"Standard Save: {std_s:.4f}s | GDS Save: {gds_s:.4f}s")
-    print(f"Standard Load: {std_l:.4f}s | GDS Load: {gds_l:.4f}s")
-    print("-" * 30)
-    print(f"Load Speedup: {std_l/gds_l:.2f}x")
-    print(f"Save Speedup: {std_s/gds_s:.2f}x")
+        if os.path.exists(p):
+            os.remove(p)
+
+    print("\nDone.")
