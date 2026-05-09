@@ -6,31 +6,20 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 from torch.serialization import skip_data
 from torch.utils.serialization import config as serialization_config
 
-# ============================================================
-# CONFIG
-# ============================================================
+MODEL_SIZE_GB = 10.0
+ITERATIONS = 10
+BEEOND_DIR = os.getenv("BEEOND", ".")
 
-MODEL_SIZE_GB = 2.0
-ITERATIONS = 5
-
-STD_PATH = "model_std.pt"
-GDS_PATH = "model_gds.pt"
-
-# Required for GPUDirect Storage
+STD_PATH = os.path.join(BEEOND_DIR, "model_std.pt")
+GDS_PATH = os.path.join(BEEOND_DIR, "model_gds.pt")
 serialization_config.save.storage_alignment = 4096
 
-# ============================================================
-# MODEL CREATION
-# ============================================================
 
 def create_heavy_model(size_gb):
     """
     Creates a large GPU state_dict approximately equal to size_gb.
     """
-
-    # FP32 = 4 bytes
     total_params = int((size_gb * (1024 ** 3)) / 4)
-
     print(f"Creating model with {total_params:,} parameters (~{size_gb} GB)...")
 
     model_tensors = {
@@ -41,20 +30,13 @@ def create_heavy_model(size_gb):
         )
         for i in range(10)
     }
-
     return model_tensors
-
-
-# ============================================================
-# CHECKPOINT OFFSETS
-# ============================================================
 
 def get_checkpoint_offsets(path):
     """
     Uses FakeTensorMode to get storage offsets
     inside the checkpoint file.
     """
-
     with FakeTensorMode():
         fake_state_dict = torch.load(
             path,
@@ -64,169 +46,90 @@ def get_checkpoint_offsets(path):
     offsets = {}
 
     for name, tensor in fake_state_dict.items():
-
         storage = tensor.untyped_storage()
-
         if not hasattr(storage, "_checkpoint_offset"):
             raise RuntimeError(
                 f"No checkpoint offset found for tensor: {name}"
             )
-
         offsets[name] = storage._checkpoint_offset
-
     return offsets
-
-
-# ============================================================
-# STANDARD PYTORCH BENCHMARK
-# ============================================================
 
 def benchmark_standard(state_dict, path, iterations):
 
     print(f"\n--- Benchmarking Standard PyTorch ({iterations} iterations) ---")
-
-    # --------------------------------------------------------
-    # SAVE
-    # --------------------------------------------------------
-
     save_times = []
-
     for _ in tqdm(range(iterations), desc="Standard Save"):
-
         torch.cuda.synchronize()
-
         start = time.time()
-
         torch.save(state_dict, path)
-
         torch.cuda.synchronize()
-
         end = time.time()
-
         save_times.append(end - start)
 
-    # --------------------------------------------------------
-    # LOAD
-    # --------------------------------------------------------
-
     load_times = []
-
     for _ in tqdm(range(iterations), desc="Standard Load"):
-
         torch.cuda.synchronize()
-
         start = time.time()
-
         loaded = torch.load(
             path,
             map_location="cuda",
             weights_only=True,
         )
-
         torch.cuda.synchronize()
-
         end = time.time()
-
         load_times.append(end - start)
-
         del loaded
-
     avg_save = sum(save_times) / len(save_times)
     avg_load = sum(load_times) / len(load_times)
-
     return avg_save, avg_load
 
-
-# ============================================================
-# GPUDIRECT STORAGE BENCHMARK
-# ============================================================
-
 def benchmark_gds(state_dict, path, iterations):
-
     print(f"\n--- Benchmarking GDS Prototype ({iterations} iterations) ---")
-
-    # --------------------------------------------------------
-    # CREATE CHECKPOINT SKELETON
-    # --------------------------------------------------------
-
     print("Preparing checkpoint skeleton...")
-
     with skip_data():
         torch.save(state_dict, path)
 
     offsets = get_checkpoint_offsets(path)
-
-    # --------------------------------------------------------
-    # GDS SAVE
-    # --------------------------------------------------------
-
     save_times = []
-
     gds_file = torch.cuda.gds.GdsFile(path, os.O_RDWR)
 
     try:
-
         for _ in tqdm(range(iterations), desc="GDS Save"):
-
             torch.cuda.synchronize()
-
             start = time.time()
-
             for name, tensor in state_dict.items():
-
                 gds_file.save_storage(
                     tensor.untyped_storage(),
                     offsets[name],
                 )
-
             torch.cuda.synchronize()
-
             end = time.time()
-
             save_times.append(end - start)
 
     finally:
         del gds_file
 
-    # --------------------------------------------------------
-    # GDS LOAD
-    # --------------------------------------------------------
-
     load_times = []
-
     gds_file = torch.cuda.gds.GdsFile(path, os.O_RDONLY)
-
     try:
-
         for _ in tqdm(range(iterations), desc="GDS Load"):
-
             # Create empty tensors only
             with skip_data():
                 loaded_dict = torch.load(
                     path,
                     weights_only=True,
                 )
-
             torch.cuda.synchronize()
-
             start = time.time()
-
             for name, tensor in loaded_dict.items():
-
                 gds_file.load_storage(
                     tensor.untyped_storage(),
                     offsets[name],
                 )
-
             torch.cuda.synchronize()
-
             end = time.time()
-
             load_times.append(end - start)
-
-            # Correctness validation
             for k in state_dict:
-
                 if not torch.equal(
                     state_dict[k],
                     loaded_dict[k],
@@ -234,9 +137,7 @@ def benchmark_gds(state_dict, path, iterations):
                     raise RuntimeError(
                         f"Mismatch detected in tensor: {k}"
                     )
-
             del loaded_dict
-
     finally:
         del gds_file
 
@@ -293,12 +194,9 @@ def print_results(
 
     print("=" * 50)
 
-
-# ============================================================
-# MAIN
-# ============================================================
-
 if __name__ == "__main__":
+    import csv
+    import gc
 
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA not available.")
@@ -309,53 +207,72 @@ if __name__ == "__main__":
             "Requires PyTorch >= 2.7 with GDS support."
         )
 
-    # --------------------------------------------------------
-    # CREATE MODEL
-    # --------------------------------------------------------
+    TEST_SIZES = [1.0, 2.0, 5.0, 10.0, 20.0, 30.0] 
+    CSV_FILENAME = "gds_benchmark_sweep.csv"
 
-    my_model = create_heavy_model(MODEL_SIZE_GB)
+    # Initialize the CSV file and write the header
+    with open(CSV_FILENAME, mode='w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "Model_Size_GB", 
+            "Std_Save_s", "Std_Load_s", 
+            "GDS_Save_s", "GDS_Load_s",
+            "Std_Save_GBs", "Std_Load_GBs",
+            "GDS_Save_GBs", "GDS_Load_GBs"
+        ])
 
-    torch.cuda.synchronize()
+    print(f"Starting sweep across sizes: {TEST_SIZES}")
 
-    # --------------------------------------------------------
-    # STANDARD BENCHMARK
-    # --------------------------------------------------------
+    for size in TEST_SIZES:
+        print(f"\n{'#'*60}")
+        print(f"### TESTING SIZE: {size} GB")
+        print(f"{'#'*60}")
 
-    std_s, std_l = benchmark_standard(
-        my_model,
-        STD_PATH,
-        ITERATIONS,
-    )
+        # 1. Create a fresh model for this size
+        my_model = create_heavy_model(size)
+        torch.cuda.synchronize()
 
-    # --------------------------------------------------------
-    # GDS BENCHMARK
-    # --------------------------------------------------------
+        # 2. Execute benchmarks using your defined functions
+        # This will run for the number of ITERATIONS defined globally
+        std_save_avg, std_load_avg = benchmark_standard(
+            my_model, 
+            STD_PATH, 
+            ITERATIONS
+        )
 
-    gds_s, gds_l = benchmark_gds(
-        my_model,
-        GDS_PATH,
-        ITERATIONS,
-    )
+        gds_save_avg, gds_load_avg = benchmark_gds(
+            my_model, 
+            GDS_PATH, 
+            ITERATIONS
+        )
 
-    # --------------------------------------------------------
-    # RESULTS
-    # --------------------------------------------------------
+        # 3. Print results to the console for real-time monitoring
+        print_results(
+            size,
+            std_save_avg,
+            std_load_avg,
+            gds_save_avg,
+            gds_load_avg,
+        )
 
-    print_results(
-        MODEL_SIZE_GB,
-        std_s,
-        std_l,
-        gds_s,
-        gds_l,
-    )
+        # 4. Append the results to the CSV (assuming CSV was intended over CSS)
+        with open(CSV_FILENAME, mode='a', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                size, 
+                std_save_avg, std_load_avg, 
+                gds_save_avg, gds_load_avg,
+                size / std_save_avg, size / std_load_avg,
+                size / gds_save_avg, size / gds_load_avg
+            ])
 
-    # --------------------------------------------------------
-    # CLEANUP
-    # --------------------------------------------------------
+        # 5. Crucial: Clear VRAM and local storage before the next larger iteration
+        del my_model
+        torch.cuda.empty_cache()
+        gc.collect()
 
-    for p in [STD_PATH, GDS_PATH]:
+        for p in [STD_PATH, GDS_PATH]:
+            if os.path.exists(p):
+                os.remove(p)
 
-        if os.path.exists(p):
-            os.remove(p)
-
-    print("\nDone.")
+    print(f"\nSweep complete. All results saved to {CSV_FILENAME}")
