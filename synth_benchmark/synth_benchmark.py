@@ -78,54 +78,53 @@ def main(gdsio_path, output_dir):
     }
     
     time = '30'
-    iterations = 5
+
     sweeps = {'io_sweep': io_sweep, 'thread_sweep': thread_sweep, 'device_sweep': device_sweep}
-    
-    for i in range(iterations):
-        for sweep_name, sweep_config in sweeps.items():
-            print(f"--- Running sweep {sweep_name} iteration {i}---")
-            res_dict = {'Transfer Type': [], 'Threads': [], 'Throughput (GiB/s)': [], 'Latency (usec)': [], 'IO Size': [], 'Device': [], 'NUMA': [], 'Load': [], 'NVLink': []}
+        
+    for sweep_name, sweep_config in sweeps.items():
+        print(f"--- Running {sweep_name} ---")
+        res_dict = {'Transfer Type': [], 'Threads': [], 'Throughput (GiB/s)': [], 'Latency (usec)': [], 'IO Size': [], 'Device': [], 'NUMA': [], 'Load': [], 'NVLink': []}
 
-            keys = list(sweep_config.keys())
-            for combo in itertools.product(*sweep_config.values()):
-                params = dict(zip(keys, combo))
-                
-                io_size, thread, dev, numa, use_nvlink, load, trans_name = (
-                    params['io'], params['threads'], params['device'], 
-                    params['numa_node'], params['nvlinks'], params['load'], params['transfer']
-                )
+        keys = list(sweep_config.keys())
+        for combo in itertools.product(*sweep_config.values()):
+            params = dict(zip(keys, combo))
+            
+            io_size, thread, dev, numa, use_nvlink, load, trans_name = (
+                params['io'], params['threads'], params['device'], 
+                params['numa_node'], params['nvlinks'], params['load'], params['transfer']
+            )
 
-                # Re-init files if needed for this max threads / device combo
-                if not os.path.isfile(os.path.join(output_dir, f'gdsio.{thread - 1}')):
-                    init_gds_files(gdsio_path, output_dir, file_size, dev, thread)
+            # Re-init files if needed for this max threads / device combo
+            if not os.path.isfile(os.path.join(output_dir, f'gdsio.{thread - 1}')):
+                init_gds_files(gdsio_path, output_dir, file_size, dev, thread)
 
-                base_cmd = [gdsio_path, '-D', output_dir, '-T', time, '-s', file_size]
-                new_cmd = base_cmd + ['-i', io_size, '-w', thread, '-x', transfer_type[trans_name], '-I', load_type[load], '-d', dev, '-n', numa]
-                
-                if use_nvlink:
-                    new_cmd.append('-p')
+            base_cmd = [gdsio_path, '-D', output_dir, '-T', time, '-s', file_size]
+            new_cmd = base_cmd + ['-i', io_size, '-w', thread, '-x', transfer_type[trans_name], '-I', load_type[load], '-d', dev, '-n', numa]
+            
+            if use_nvlink:
+                new_cmd.append('-p')
 
-                new_cmd = [str(x) for x in new_cmd]
-                print('Running', new_cmd)
-                res = subprocess.run(new_cmd, capture_output=True).stdout
-                res = str(res).split(' ')
-                latency = float(res[res.index('Avg_Latency:') + 1])
-                throughput = float(res[res.index('Throughput:') + 1])
-                print('latency', latency, 'throughput', throughput)
+            new_cmd = [str(x) for x in new_cmd]
+            print('Running', new_cmd)
+            res = subprocess.run(new_cmd, capture_output=True).stdout
+            res = str(res).split(' ')
+            latency = float(res[res.index('Avg_Latency:') + 1])
+            throughput = float(res[res.index('Throughput:') + 1])
+            print('latency', latency, 'throughput', throughput)
 
-                res_dict['Transfer Type'].append(trans_name)
-                res_dict['Threads'].append(thread)
-                res_dict['IO Size'].append(io_size)
-                res_dict['Latency (usec)'].append(latency)
-                res_dict['Throughput (GiB/s)'].append(throughput)
-                res_dict['Device'].append(dev)
-                res_dict['NUMA'].append(numa)
-                res_dict['Load'].append(load)
-                res_dict['NVLink'].append(use_nvlink)
+            res_dict['Transfer Type'].append(trans_name)
+            res_dict['Threads'].append(thread)
+            res_dict['IO Size'].append(io_size)
+            res_dict['Latency (usec)'].append(latency)
+            res_dict['Throughput (GiB/s)'].append(throughput)
+            res_dict['Device'].append(dev)
+            res_dict['NUMA'].append(numa)
+            res_dict['Load'].append(load)
+            res_dict['NVLink'].append(use_nvlink)
 
-            df = pd.DataFrame.from_dict(res_dict)
-            home_dir = os.environ.get('HOME', '.')
-            df.to_csv(os.path.join(home_dir, f'{sweep_name}_{i}_results.csv'), index=False)
+        df = pd.DataFrame.from_dict(res_dict)
+        home_dir = os.environ.get('HOME', '.')
+        df.to_csv(os.path.join(home_dir, f'{sweep_name}_results.csv'), index=False)
 
 
 if __name__ == '__main__':
