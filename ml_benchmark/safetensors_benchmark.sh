@@ -8,11 +8,10 @@
 #SBATCH --mem=32G                      # Request 32 GB of system RAM
 #SBATCH --time=00:30:00                # Maximum time the job will run (HH:MM:SS)
 #SBATCH -A <YOUR_ACC_ID>           # Replace with your actual project ID on CLAIX
-
-# Beeond related stuff
 #SBATCH --beeond
+
 git config --global credential.helper store
-git clone https://huggingface.co/meta-llama/Meta-Llama-Guard-2-8B $BEEOND
+cp -r $HOME/claix_gds_benchmarking/claix_gds_benchmarking/ml_benchmark/Meta-Llama-Guard-2-8B $BEEOND
 
 # 1. Clean the environment and load the correct NVIDIA drivers
 module purge
@@ -22,6 +21,7 @@ module load CUDA/12.3.0             # Ensure this matches the CUDA version your 
 # source /rwthfs/rz/cluster/home/ts106370/your_env/bin/activate
 
 export KVIKIO_LOG_LEVEL=TRACE
+
 
 source $HOME/claix_gds_benchmarking/claix_gds_benchmarking/bin/activate  # Activate your Python environment (adjust path if needed)
 python install -r $HOME/claix_gds_benchmarking/claix_gds_benchmarking/requirements.txt  # Install any additional dependencies for the safetensors benchmark

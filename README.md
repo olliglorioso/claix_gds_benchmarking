@@ -2,12 +2,12 @@
 
 Project is divided into synthetic and ML benchmarks, which can be run separately.
 
-## Quick start ML
-- ML Benchmarks contains practical safetensor loading with Kvikio and synthetic weights loading with PyTorch.
+## Quick start
+- ML Benchmarks contains practical safetensor loading with Kvikio and synthetic weights loading with PyTorch. Furthremore, we have gdsio synthetic data benchmarking.
 
 ### Safetensors quick start
 1. Download the safetensors from Hugging Face:
-`git clone https://huggingface.co/meta-llama/Meta-Llama-Guard-2-8B $HOME/claix_gds_benchmarking/claix_gds_benchmarking`
+`git clone https://huggingface.co/meta-llama/Meta-Llama-Guard-2-8B $HOME/claix_gds_benchmarking/claix_gds_benchmarking/ml_benchmark`
 2. Ensure that we have a Python venv with the required dependencies:
 ```bash
 mkdir $HOME/claix_gds_benchmarking/claix_gds_benchmarking/st_venv
@@ -22,3 +22,8 @@ pip install -r $HOME/claix_gds_benchmarking/claix_gds_benchmarking/requirements.
 1. Ensure that we have a Python venv with the required dependencies from the safetensors quick start.
 2. Run the script (exports required environment variables and runs & logs everything automatically):
 `sbatch $HOME/claix_gds_benchmarking/claix_gds_benchmarking/ml_benchmark/ml_benchmark.sh`
+
+### Synthetic gdsio quick start
+1. Ensure that we have a Python venv with the required dependencies from the safetensors quick start.
+2. Run the script (exports required environment variables and runs & logs everything automatically):
+`sbatch $HOME/claix_gds_benchmarking/claix_gds_benchmarking/synth_benchmark/synth_benchmark.sh`

@@ -10,24 +10,9 @@
 #SBATCH --account=your_project_id      # TODO: Replace with your actual project account ID
 #SBATCH --beeond
 
-# ==============================================================================
-# 1. Environment Setup
-# ==============================================================================
-echo "Starting GDSIO benchmark on node: $HOSTNAME"
-echo "Job ID: $SLURM_JOB_ID"
 
-# Purge existing modules and load CUDA (Ensure the version matches the gdsio binary path)
 module purge
-module load CUDA/12.3.0 # TODO: Adjust to the CUDA version used on your cluster
-
-# Activate your Python environment (for pandas)
-# TODO: Uncomment and adjust the path to your environment
-# source /home/ts106370/your_env/bin/activate
-
-# ==============================================================================
-# 2. Storage Setup (BeeOND)
-# ==============================================================================
-# The Python script looks for $BEEOND. We verify it exists here.
+module load CUDA/12.3.0 # TODO: Adjust to the CUDA version used on 
 if [ -z "$BEEOND" ]; then
     echo "⚠️ Warning: \$BEEOND is not set by the SLURM environment."
     echo "Falling back to /tmp for storage."
