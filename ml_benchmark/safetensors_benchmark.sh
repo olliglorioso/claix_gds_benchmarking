@@ -17,17 +17,15 @@ git clone https://huggingface.co/meta-llama/Meta-Llama-Guard-2-8B $BEEOND
 
 # 1. Clean the environment and load the correct NVIDIA drivers
 module purge
-module load CUDA/12.1   # Ensure this matches the CUDA version your PyTorch environment expects
+module load CUDA/12.3.0             # Ensure this matches the CUDA version your PyTorch environment expects
 
 # 2. Activate your Python environment (uncomment and adjust if you use conda/venv)
 # source /rwthfs/rz/cluster/home/ts106370/your_env/bin/activate
 
-export KVIKIO_COMPAT_MODE=ON
-export KVIKIO_AUTO_DIRECT_IO_READ=1
 export KVIKIO_LOG_LEVEL=TRACE
 
 source $HOME/claix_gds_benchmarking/claix_gds_benchmarking/bin/activate  # Activate your Python environment (adjust path if needed)
-
+python install -r $HOME/claix_gds_benchmarking/claix_gds_benchmarking/requirements.txt  # Install any additional dependencies for the safetensors benchmark
 # 4. Execute the Python script
 echo "Starting benchmark on node: $HOSTNAME"
 srun python $HOME/claix_gds_benchmarking/claix_gds_benchmarking/ml_benchmark/safetensors_benchmark.py

@@ -7,6 +7,7 @@ import time
 import csv
 from kvikio.cufile import CuFile
 from kvikio import cufile_driver
+from kvikio import defaults
 
 # --- 1. Safetensors to PyTorch Dtype Mapping ---
 SAFETENSORS_DTYPE_MAP = {
@@ -29,7 +30,6 @@ def load_safetensor_with_gds(filepath):
     data_start_offset = 8 + header_size
     tensors = {}
     f_gds = CuFile(filepath, "r")
-    f_gds.drop_system_page_cache()
     
     for tensor_name, metadata in header.items():
         if tensor_name == "__metadata__":
@@ -61,9 +61,17 @@ def run_benchmark(filepaths, method="GDS", iterations=10):
     
     # --- ADD THIS TOGGLE ---
     if method == "Standard (CPU-Bounce)":
-        os.environ["KVIKIO_COMPAT_MODE"] = "1"
+        defaults.set({
+            "compat_mode": 1, 
+            "auto_direct_io_read": 0,
+            "num_threads": 8
+        })
     else:
-        os.environ.pop("KVIKIO_COMPAT_MODE", None)
+        defaults.set({
+            "compat_mode": 0, 
+            "auto_direct_io_read": 1,
+            "num_threads": 8
+        })
         
     total_bytes = sum(os.path.getsize(fp) for fp in filepaths)
     total_gb = total_bytes / (1024**3)
@@ -90,7 +98,20 @@ def run_benchmark(filepaths, method="GDS", iterations=10):
         
         latency = end_time - start_time
         throughput = total_gb / latency
-        # ... (rest of the metric calculation remains exactly the same)
+        metrics.append({
+            "Iteration": i + 1,
+            "Method": method,
+            "Data_Size_GB": round(total_gb, 4),
+            "Latency_sec": round(latency, 4),
+            "Throughput_GB_s": round(throughput, 4)
+        })
+        
+        print(f" Latency: {latency:.2f}s | Throughput: {throughput:.2f} GB/s")
+        
+        # Free memory immediately to prevent OOM
+        del full_state_dict
+
+    return metrics
 
 # --- Main Execution ---
 if __name__ == "__main__":    
@@ -107,6 +128,9 @@ if __name__ == "__main__":
     # 2. Locate Data
     # expandvars resolves $BEEOND, expanduser resolves ~
     raw_path = "$BEEOND/Meta-Llama-Guard-2-8B/*.safetensors"
+    # dev 
+    raw_path = "~/claix_gds_benchmarking/claix_gds_benchmarking/ml_benchmark/Meta-Llama-Guard-2-8B/*.safetensors"
+    
     pathed = os.path.expanduser(os.path.expandvars(raw_path))
     filepaths = sorted(glob.glob(pathed))
     
