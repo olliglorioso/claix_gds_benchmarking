@@ -54,9 +54,9 @@ def load_safetensor_with_gds(filepath):
     f_gds.close()
     return tensors
 
-def run_benchmark(filepaths, method="GDS", iterations=10):
+def run_benchmark(filepaths, method="GDS", iterations=10, task_size=(4*1024*1024)):
     print(f"\n{'-'*50}")
-    print(f"🚀 Starting Benchmark: {method} ({iterations} iterations)")
+    print(f"🚀 Starting Benchmark: {method} | Task Size: {task_size/(1024*1024):.2f}M ({iterations} iterations)")
     print(f"{'-'*50}")
     
     # --- ADD THIS TOGGLE ---
@@ -64,13 +64,15 @@ def run_benchmark(filepaths, method="GDS", iterations=10):
         defaults.set({
             "compat_mode": 1, 
             "auto_direct_io_read": 0,
-            "num_threads": 8
+            "num_threads": 8,
+            "task_size": task_size
         })
     else:
         defaults.set({
             "compat_mode": 0, 
             "auto_direct_io_read": 1,
-            "num_threads": 8
+            "num_threads": 8,
+            "task_size": task_size
         })
         
     total_bytes = sum(os.path.getsize(fp) for fp in filepaths)
@@ -87,7 +89,6 @@ def run_benchmark(filepaths, method="GDS", iterations=10):
         
         
         for fp in filepaths:
-            # --- UPDATE THIS BLOCK ---
             # Both methods now use KvikIO. The environment variable 
             # dictates whether it uses DMA or the CPU bounce buffer.
             shard_tensors = load_safetensor_with_gds(fp)
@@ -101,6 +102,7 @@ def run_benchmark(filepaths, method="GDS", iterations=10):
         metrics.append({
             "Iteration": i + 1,
             "Method": method,
+            "Task_Size_Bytes": task_size,  # <-- Added to metrics
             "Data_Size_GB": round(total_gb, 4),
             "Latency_sec": round(latency, 4),
             "Throughput_GB_s": round(throughput, 4)
@@ -115,7 +117,7 @@ def run_benchmark(filepaths, method="GDS", iterations=10):
 
 # --- Main Execution ---
 if __name__ == "__main__":    
-    # 1. Health Check (Using your preferred cufile_driver approach)
+    # 1. Health Check
     try:
         gds_avail = cufile_driver.get("is_gds_available")
         print(f"Is gds available: {gds_avail}")
@@ -126,10 +128,9 @@ if __name__ == "__main__":
         print(f"⚠️ Warning: Could not read properties. Error: {e}")
 
     # 2. Locate Data
-    # expandvars resolves $BEEOND, expanduser resolves ~
     raw_path = "$BEEOND/Meta-Llama-Guard-2-8B/*.safetensors"
     # dev 
-    raw_path = "~/claix_gds_benchmarking/claix_gds_benchmarking/ml_benchmark/Meta-Llama-Guard-2-8B/*.safetensors"
+    # raw_path = "~/claix_gds_benchmarking/claix_gds_benchmarking/ml_benchmark/Meta-Llama-Guard-2-8B/*.safetensors"
     
     pathed = os.path.expanduser(os.path.expandvars(raw_path))
     filepaths = sorted(glob.glob(pathed))
@@ -139,24 +140,39 @@ if __name__ == "__main__":
         
     print(f"\nFound {len(filepaths)} safetensors files.")
 
-    # 3. Run Benchmarks
+    # 3. Define the Sweep Parameters
+    task_sizes = [
+        64 * 1024,        # 64K
+        256 * 1024,       # 256K
+        1 * 1024 * 1024,  # 1M
+        4 * 1024 * 1024,  # 4M
+        16 * 1024 * 1024, # 16M
+        64 * 1024 * 1024  # 64M
+    ]
     ITERATIONS = 10
     all_results = []
     
-    # Benchmark 1: Standard POSIX / CPU Bounce Buffer
-    std_results = run_benchmark(filepaths, method="Standard (CPU-Bounce)", iterations=ITERATIONS)
-    all_results.extend(std_results)
-    
-    # Benchmark 2: GPUDirect Storage (GDS)
-    gds_results = run_benchmark(filepaths, method="GDS", iterations=ITERATIONS)
-    all_results.extend(gds_results)
+    # 4. Run Benchmark Sweep
+    for ts in task_sizes:
+        print(f"\n{'='*60}")
+        print(f"🧪 SWEEPING TASK SIZE: {ts / (1024*1024):.2f} MB")
+        print(f"{'='*60}")
+        
+        # Benchmark 1: Standard POSIX / CPU Bounce Buffer
+        std_results = run_benchmark(filepaths, method="Standard (CPU-Bounce)", iterations=ITERATIONS, task_size=ts)
+        all_results.extend(std_results)
+        
+        # Benchmark 2: GPUDirect Storage (GDS)
+        gds_results = run_benchmark(filepaths, method="GDS", iterations=ITERATIONS, task_size=ts)
+        all_results.extend(gds_results)
 
-    # 4. Save to CSV in $HOME
+    # 5. Save to CSV in $HOME
     csv_file = os.path.expanduser("~/gds_vs_posix_benchmark.csv")
     
     with open(csv_file, mode="w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["Iteration", "Method", "Data_Size_GB", "Latency_sec", "Throughput_GB_s"])
+        # Added "Task_Size_Bytes" to the fieldnames
+        writer = csv.DictWriter(f, fieldnames=["Iteration", "Method", "Task_Size_Bytes", "Data_Size_GB", "Latency_sec", "Throughput_GB_s"])
         writer.writeheader()
         writer.writerows(all_results)
         
-    print(f"\n🎉 Benchmark complete! Results saved to: {csv_file}")
+    print(f"\n🎉 Sweep complete! All results saved to: {csv_file}")
