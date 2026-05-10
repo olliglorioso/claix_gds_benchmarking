@@ -10,7 +10,6 @@
 #SBATCH -A <YOUR_ACC_ID>           # Replace with your actual project ID on CLAIX
 
 # Beeond related stuff
-
 #SBATCH --beeond
 git config --global credential.helper store
 git clone https://huggingface.co/meta-llama/Meta-Llama-Guard-2-8B $BEEOND
