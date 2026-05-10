@@ -1,2 +1,3 @@
 pandas
 torch
+kvikio-cu12==26.4.0
