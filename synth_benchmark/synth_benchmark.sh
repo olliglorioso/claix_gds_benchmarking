@@ -7,7 +7,7 @@
 #SBATCH --gres=gpu:4
 #SBATCH --cpus-per-task=24
 #SBATCH --mem=64G
-#SBATCH --time=00:15:00
+#SBATCH --time=00:30:00
 #SBATCH --account=thes2292
 #SBATCH --beeond
 

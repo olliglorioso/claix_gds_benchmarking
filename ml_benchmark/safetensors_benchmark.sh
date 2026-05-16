@@ -7,7 +7,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --time=00:15:00
+#SBATCH --time=00:30:00
 #SBATCH --account=thes2292
 #SBATCH --beeond
 
@@ -80,7 +80,8 @@ if ! "${VENV_DIR}/bin/python" -c 'import sys; raise SystemExit(0 if sys.version_
 fi
 
 "${VENV_DIR}/bin/python" -m pip install --upgrade pip
-"${VENV_DIR}/bin/python" -m pip install pandas torch kvikio-cu12==26.4.0 tqdm
+"${VENV_DIR}/bin/python" -m pip install pandas kvikio-cu12==26.4.0 tqdm
+"${VENV_DIR}/bin/python" -m pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu126
 
 export KVIKIO_LOG_LEVEL="${KVIKIO_LOG_LEVEL:-WARN}"
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
