@@ -168,7 +168,7 @@ if __name__ == "__main__":
         16 * 1024 * 1024, # 16M
         64 * 1024 * 1024  # 64M
     ]
-    ITERATIONS = 10
+    ITERATIONS = 1
     all_results = []
     
     # 4. Run Benchmark Sweep

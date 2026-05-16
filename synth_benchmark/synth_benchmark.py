@@ -83,7 +83,7 @@ def main(gdsio_path, output_dir, results_dir):
     }
     thread_sweep = {
         'io': ['4K'],
-        'threads': [1, 4, 8, 16, 32, 64, 128, 256, 512],
+        'threads': [1, 4, 8, 16, 32, 48, 64, 80, 96],
         'device': [0],
         'numa_node': [0],
         'load': ['RAND_READ', 'SEQ_READ'],

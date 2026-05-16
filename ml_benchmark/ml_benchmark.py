@@ -7,7 +7,7 @@ from torch.serialization import skip_data
 from torch.utils.serialization import config as serialization_config
 
 MODEL_SIZE_GB = 10.0
-ITERATIONS = 10
+ITERATIONS = 1
 BEEOND_DIR = os.getenv("BEEOND", ".")
 
 STD_PATH = os.path.join(BEEOND_DIR, "model_std.pt")
@@ -209,7 +209,7 @@ if __name__ == "__main__":
 
     TEST_SIZES = [1.0, 2.0, 5.0, 10.0, 20.0, 30.0] 
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    CSV_FILENAME = os.path.join(script_dir, "gds_benchmark_sweep.csv")
+    CSV_FILENAME = os.path.join(script_dir, "ML_GDS_SWEEP.csv")
 
     # Initialize the CSV file and write the header
     with open(CSV_FILENAME, mode='w', newline='') as f:
