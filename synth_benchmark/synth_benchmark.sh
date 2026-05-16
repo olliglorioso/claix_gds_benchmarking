@@ -1,32 +1,56 @@
 #!/bin/bash
-#SBATCH --job-name=gdsio_bench         # Name of the job
-#SBATCH --output=gdsio_bench_%j.out    # Standard output log (%j = Job ID)
-#SBATCH --error=gdsio_bench_%j.err     # Standard error log
-#SBATCH --partition=c23g                # GPU partition (e.g., 'c18g' or 'gpu')
-#SBATCH --gres=gpu:1                   # CRITICAL: Request 4 GPUs for device_sweep [0, 1, 2, 3]
-#SBATCH --cpus-per-task=1           # High CPU count to feed the 512-thread POSIX tests
-#SBATCH --mem=64G                      # Memory for standard page-cache bounce buffers
-#SBATCH --time=00:10:00                # Max runtime (Sweep takes ~70 mins + file init time)
-#SBATCH --account=thes2292      # TODO: Replace with your actual project account ID
+#SBATCH --job-name=gdsio_bench
+#SBATCH --chdir=/home/ts106370/claix_gds_benchmarking/claix_gds_benchmarking/synth_benchmark
+#SBATCH --output=synth_benchmark_%j.out
+#SBATCH --error=synth_benchmark_%j.err
+#SBATCH --partition=c23g
+#SBATCH --gres=gpu:4
+#SBATCH --cpus-per-task=24
+#SBATCH --mem=64G
+#SBATCH --time=00:15:00
+#SBATCH --account=thes2292
 #SBATCH --beeond
 
+set -euo pipefail
 
-# sbatch synth_benchmark.sh \
-# watch squeue -u $USER
-# r_wlm_usage -q -p thes2292
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VENV_DIR="${SCRIPT_DIR}/.venv"
+
+cd "${SCRIPT_DIR}"
+
+echo "Starting synthetic gdsio benchmark"
+echo "Node: ${HOSTNAME}"
+echo "Job ID: ${SLURM_JOB_ID:-not-a-slurm-job}"
+echo "Work directory: ${SCRIPT_DIR}"
 
 module purge
-module load CUDA/12.3.0 # TODO: Adjust to the CUDA version used on 
+module load CUDA/12.3.0
 
-chmod +x synth_benchmark.sh
-chmod +x synth_benchmark.py
+if [ -z "${BEEOND:-}" ]; then
+    echo "Error: BEEOND is not set. Submit this script with #SBATCH --beeond."
+    exit 1
+fi
 
-python -m venv venv
-source venv/bin/activate
-pip install pandas
+GDSIO_PATH="${CUDA_HOME:-/usr/local/cuda}/gds/tools/gdsio"
+if [ ! -x "${GDSIO_PATH}" ]; then
+    GDSIO_PATH="/usr/local/cuda/gds/tools/gdsio"
+fi
+if [ ! -x "${GDSIO_PATH}" ]; then
+    echo "Error: gdsio not found. Checked CUDA_HOME and /usr/local/cuda/gds/tools/gdsio."
+    exit 1
+fi
 
-srun python synth_benchmark.py
+if [ ! -d "${VENV_DIR}" ]; then
+    python -m venv "${VENV_DIR}"
+fi
 
-echo "------------------------------------------------------------"
-echo "🎉 Job completed! Check your home directory for the CSV files."
-echo "------------------------------------------------------------"
+source "${VENV_DIR}/bin/activate"
+python -m pip install --upgrade pip
+python -m pip install pandas
+
+echo "BeeOND storage: ${BEEOND}"
+echo "gdsio binary: ${GDSIO_PATH}"
+echo "Running synthetic benchmark..."
+srun python "${SCRIPT_DIR}/synth_benchmark.py" --gdsio-path "${GDSIO_PATH}" --output-dir "${BEEOND}" --results-dir "${SCRIPT_DIR}"
+
+echo "Synthetic benchmark completed. CSV files are in ${SCRIPT_DIR}."

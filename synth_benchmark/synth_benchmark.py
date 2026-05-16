@@ -45,9 +45,20 @@ transfer_type = {'GDS': 0, 'NONGDS': 2, 'PAGECACHE': 4}
 def init_gds_files(gdsio_path, output_dir, file_size, device, workers):
     cmd = [gdsio_path, '-D', output_dir, '-d', device, '-T', '1', '-s', file_size, '-w', workers, '-I', 3]
     cmd = [str(x) for x in cmd]
-    subprocess.run(cmd)
+    subprocess.run(cmd, check=True)
 
-def main(gdsio_path, output_dir):
+def parse_args():
+    parser = argparse.ArgumentParser(description="Run synthetic GDS benchmarks with gdsio.")
+    parser.add_argument("--gdsio-path", default="/usr/local/cuda/gds/tools/gdsio")
+    parser.add_argument("--output-dir", default=os.environ.get("BEEOND", "/tmp"))
+    parser.add_argument(
+        "--results-dir",
+        default=os.path.dirname(os.path.abspath(__file__)),
+        help="Directory for result CSV files.",
+    )
+    return parser.parse_args()
+
+def main(gdsio_path, output_dir, results_dir):
     file_size = '30G'
     io_sweep = {
         'io': ['128K', '256K', '512K', '1M', '4M', '16M', '64M', '128M'], 
@@ -106,10 +117,10 @@ def main(gdsio_path, output_dir):
 
             new_cmd = [str(x) for x in new_cmd]
             print('Running', new_cmd)
-            res = subprocess.run(new_cmd, capture_output=True).stdout
-            res = str(res).split(' ')
-            latency = float(res[res.index('Avg_Latency:') + 1])
-            throughput = float(res[res.index('Throughput:') + 1])
+            res = subprocess.run(new_cmd, check=True, capture_output=True, text=True)
+            res_tokens = res.stdout.split()
+            latency = float(res_tokens[res_tokens.index('Avg_Latency:') + 1])
+            throughput = float(res_tokens[res_tokens.index('Throughput:') + 1])
             print('latency', latency, 'throughput', throughput)
 
             res_dict['Transfer Type'].append(trans_name)
@@ -123,14 +134,11 @@ def main(gdsio_path, output_dir):
             res_dict['NVLink'].append(use_nvlink)
 
         df = pd.DataFrame.from_dict(res_dict)
-        home_dir = os.environ.get('HOME', '.')
-        df.to_csv(os.path.join(home_dir, f'{sweep_name}_results.csv'), index=False)
+        os.makedirs(results_dir, exist_ok=True)
+        df.to_csv(os.path.join(results_dir, f'{sweep_name}_results.csv'), index=False)
 
 
 if __name__ == '__main__':
-    gdsio_path = '/usr/local/cuda/gds/tools/gdsio'
-    gds_dir = os.environ.get('BEEOND', '/tmp')
-    
-    main(gdsio_path, gds_dir)
-
+    args = parse_args()
+    main(args.gdsio_path, args.output_dir, args.results_dir)
 

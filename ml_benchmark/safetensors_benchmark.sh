@@ -1,33 +1,56 @@
 #!/bin/bash
-#SBATCH --job-name=sf_bench         # Name of the job
-#SBATCH --output=sf___bench_%j.out    # Standard output log (%j = Job ID)
-#SBATCH --error=sf___bench_%j.err     # Standard error log
-#SBATCH --partition=c23g                # GPU partition (e.g., 'c18g' or 'gpu')
-#SBATCH --gres=gpu:1                   # CRITICAL: Request 4 GPUs for device_sweep [0, 1, 2, 3]
-#SBATCH --cpus-per-task=1           # High CPU count to feed the 512-thread POSIX tests
-#SBATCH --mem=64G                      # Memory for standard page-cache bounce buffers
-#SBATCH --time=00:10:00                # Max runtime (Sweep takes ~70 mins + file init time)
-#SBATCH --account=thes2292      # TODO: Replace with your actual project account ID
+#SBATCH --job-name=safetensors_bench
+#SBATCH --chdir=/home/ts106370/claix_gds_benchmarking/claix_gds_benchmarking/ml_benchmark
+#SBATCH --output=safetensors_benchmark_%j.out
+#SBATCH --error=safetensors_benchmark_%j.err
+#SBATCH --partition=c23g
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
+#SBATCH --time=00:15:00
+#SBATCH --account=thes2292
 #SBATCH --beeond
 
-git config --global credential.helper store
-cp -r $HOME/claix_gds_benchmarking/claix_gds_benchmarking/ml_benchmark/Meta-Llama-Guard-2-8B $BEEOND
+set -euo pipefail
 
-# 1. Clean the environment and load the correct NVIDIA drivers
-module load CUDA/12.3.0             # Ensure this matches the CUDA version your PyTorch environment expects
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MODEL_DIR="${SCRIPT_DIR}/Meta-Llama-Guard-2-8B"
+VENV_DIR="${SCRIPT_DIR}/.venv"
 
-chmod +x safetensors_benchmark.sh
-chmod +x safetensors_benchmark.py
+cd "${SCRIPT_DIR}"
 
-python -m venv venv
-source venv/bin/activate
-pip install pandas torch kvikio-cu12 glob tqdm
+echo "Starting safetensors benchmark"
+echo "Node: ${HOSTNAME}"
+echo "Job ID: ${SLURM_JOB_ID:-not-a-slurm-job}"
+echo "Work directory: ${SCRIPT_DIR}"
 
-# 2. Activate your Python environment (uncomment and adjust if you use conda/venv)
-# source /rwthfs/rz/cluster/home/ts106370/your_env/bin/activate
+module purge
+module load CUDA/12.3.0
 
-export KVIKIO_LOG_LEVEL=TRACE
+if [ -z "${BEEOND:-}" ]; then
+    echo "Error: BEEOND is not set. Submit this script with #SBATCH --beeond."
+    exit 1
+fi
 
-# 4. Execute the Python script
-echo "Starting benchmark on node: $HOSTNAME"
-srun python $HOME/claix_gds_benchmarking/claix_gds_benchmarking/ml_benchmark/safetensors_benchmark.py
+if [ ! -d "${MODEL_DIR}" ]; then
+    echo "Error: model directory not found: ${MODEL_DIR}"
+    exit 1
+fi
+
+echo "BeeOND storage: ${BEEOND}"
+echo "Copying safetensors model to BeeOND..."
+cp -a "${MODEL_DIR}" "${BEEOND}/"
+
+if [ ! -d "${VENV_DIR}" ]; then
+    python -m venv "${VENV_DIR}"
+fi
+
+source "${VENV_DIR}/bin/activate"
+python -m pip install --upgrade pip
+python -m pip install pandas torch kvikio-cu12==26.4.0 tqdm
+
+export KVIKIO_LOG_LEVEL="${KVIKIO_LOG_LEVEL:-WARN}"
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
+
+echo "Running safetensors benchmark..."
+srun python "${SCRIPT_DIR}/safetensors_benchmark.py"

@@ -116,7 +116,7 @@ def run_benchmark(filepaths, method="GDS", iterations=10, task_size=(4*1024*1024
     return metrics
 
 # --- Main Execution ---
-if __name__ == "__main__":    
+if __name__ == "__main__":
     # 1. Health Check
     try:
         gds_avail = cufile_driver.get("is_gds_available")
@@ -166,8 +166,9 @@ if __name__ == "__main__":
         gds_results = run_benchmark(filepaths, method="GDS", iterations=ITERATIONS, task_size=ts)
         all_results.extend(gds_results)
 
-    # 5. Save to CSV in $HOME
-    csv_file = os.path.expanduser("~/gds_vs_posix_benchmark.csv")
+    # 5. Save to CSV next to this benchmark script
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    csv_file = os.path.join(script_dir, "gds_vs_posix_benchmark.csv")
     
     with open(csv_file, mode="w", newline="") as f:
         # Added "Task_Size_Bytes" to the fieldnames

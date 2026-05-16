@@ -208,7 +208,8 @@ if __name__ == "__main__":
         )
 
     TEST_SIZES = [1.0, 2.0, 5.0, 10.0, 20.0, 30.0] 
-    CSV_FILENAME = "gds_benchmark_sweep.csv"
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    CSV_FILENAME = os.path.join(script_dir, "gds_benchmark_sweep.csv")
 
     # Initialize the CSV file and write the header
     with open(CSV_FILENAME, mode='w', newline='') as f:
