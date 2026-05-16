@@ -5,6 +5,7 @@ import json
 import struct
 import time
 import csv
+import gc
 from kvikio.cufile import CuFile
 from kvikio import cufile_driver
 from kvikio import defaults
@@ -15,6 +16,10 @@ SAFETENSORS_DTYPE_MAP = {
     "F16": torch.float16,
     "BF16": torch.bfloat16,
     "I8":  torch.int8,
+    "U8": torch.uint8,
+    "BOOL": torch.bool,
+    "F64": torch.float64,
+    "I16": torch.int16,
     "I32": torch.int32,
     "I64": torch.int64,
 }
@@ -30,28 +35,40 @@ def load_safetensor_with_gds(filepath):
     data_start_offset = 8 + header_size
     tensors = {}
     f_gds = CuFile(filepath, "r")
-    
-    for tensor_name, metadata in header.items():
-        if tensor_name == "__metadata__":
-            continue
-            
-        shape = metadata['shape']
-        st_dtype = metadata['dtype']
-        pt_dtype = SAFETENSORS_DTYPE_MAP.get(st_dtype, torch.float32)
-        
-        # Allocate pinned VRAM
-        gpu_tensor = torch.empty(shape, dtype=pt_dtype, device='cuda')
-        
-        start_byte = metadata['data_offsets'][0]
-        end_byte = metadata['data_offsets'][1]
-        byte_length = end_byte - start_byte
-        file_offset = data_start_offset + start_byte
-        
-        # NVMe -> PCIe -> VRAM (GDS DMA)
-        f_gds.read(gpu_tensor, size=byte_length, file_offset=file_offset)
-        tensors[tensor_name] = gpu_tensor
-        
-    f_gds.close()
+    try:
+        for tensor_name, metadata in header.items():
+            if tensor_name == "__metadata__":
+                continue
+
+            shape = metadata['shape']
+            st_dtype = metadata['dtype']
+            if st_dtype not in SAFETENSORS_DTYPE_MAP:
+                raise ValueError(
+                    f"Unsupported safetensors dtype {st_dtype!r} "
+                    f"for tensor {tensor_name!r} in {filepath}"
+                )
+            pt_dtype = SAFETENSORS_DTYPE_MAP[st_dtype]
+
+            gpu_tensor = torch.empty(shape, dtype=pt_dtype, device='cuda')
+
+            start_byte = metadata['data_offsets'][0]
+            end_byte = metadata['data_offsets'][1]
+            byte_length = end_byte - start_byte
+            file_offset = data_start_offset + start_byte
+
+            bytes_read = f_gds.read(
+                gpu_tensor,
+                size=byte_length,
+                file_offset=file_offset,
+            )
+            if bytes_read != byte_length:
+                raise RuntimeError(
+                    f"Short read for {tensor_name!r}: "
+                    f"expected {byte_length} bytes, got {bytes_read}"
+                )
+            tensors[tensor_name] = gpu_tensor
+    finally:
+        f_gds.close()
     return tensors
 
 def run_benchmark(filepaths, method="GDS", iterations=10, task_size=(4*1024*1024)):
@@ -112,6 +129,8 @@ def run_benchmark(filepaths, method="GDS", iterations=10, task_size=(4*1024*1024
         
         # Free memory immediately to prevent OOM
         del full_state_dict
+        torch.cuda.empty_cache()
+        gc.collect()
 
     return metrics
 

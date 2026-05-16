@@ -47,6 +47,15 @@ def init_gds_files(gdsio_path, output_dir, file_size, device, workers):
     cmd = [str(x) for x in cmd]
     subprocess.run(cmd, check=True)
 
+def parse_gdsio_output(output):
+    tokens = output.split()
+    try:
+        latency = float(tokens[tokens.index('Avg_Latency:') + 1])
+        throughput = float(tokens[tokens.index('Throughput:') + 1])
+    except (ValueError, IndexError) as exc:
+        raise RuntimeError(f"Could not parse gdsio output:\n{output}") from exc
+    return latency, throughput
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Run synthetic GDS benchmarks with gdsio.")
     parser.add_argument("--gdsio-path", default="/usr/local/cuda/gds/tools/gdsio")
@@ -59,6 +68,9 @@ def parse_args():
     return parser.parse_args()
 
 def main(gdsio_path, output_dir, results_dir):
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(results_dir, exist_ok=True)
+
     file_size = '30G'
     io_sweep = {
         'io': ['128K', '256K', '512K', '1M', '4M', '16M', '64M', '128M'], 
@@ -68,9 +80,9 @@ def main(gdsio_path, output_dir, results_dir):
         'load': ['RAND_READ', 'SEQ_READ'],
         'transfer': ['GDS', 'NONGDS'],
         'nvlinks': [False]
-    } 
+    }
     thread_sweep = {
-        'io': ['4k'],
+        'io': ['4K'],
         'threads': [1, 4, 8, 16, 32, 64, 128, 256, 512],
         'device': [0],
         'numa_node': [0],
@@ -118,9 +130,7 @@ def main(gdsio_path, output_dir, results_dir):
             new_cmd = [str(x) for x in new_cmd]
             print('Running', new_cmd)
             res = subprocess.run(new_cmd, check=True, capture_output=True, text=True)
-            res_tokens = res.stdout.split()
-            latency = float(res_tokens[res_tokens.index('Avg_Latency:') + 1])
-            throughput = float(res_tokens[res_tokens.index('Throughput:') + 1])
+            latency, throughput = parse_gdsio_output(res.stdout + res.stderr)
             print('latency', latency, 'throughput', throughput)
 
             res_dict['Transfer Type'].append(trans_name)
@@ -134,11 +144,9 @@ def main(gdsio_path, output_dir, results_dir):
             res_dict['NVLink'].append(use_nvlink)
 
         df = pd.DataFrame.from_dict(res_dict)
-        os.makedirs(results_dir, exist_ok=True)
         df.to_csv(os.path.join(results_dir, f'{sweep_name}_results.csv'), index=False)
 
 
 if __name__ == '__main__':
     args = parse_args()
     main(args.gdsio_path, args.output_dir, args.results_dir)
-
