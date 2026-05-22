@@ -6,7 +6,7 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 from torch.serialization import skip_data
 from torch.utils.serialization import config as serialization_config
 
-MODEL_SIZE_GB = 10.0
+MODEL_SIZE_GB = 50.0
 ITERATIONS = 1
 BEEOND_DIR = os.getenv("BEEOND", ".")
 
@@ -207,7 +207,7 @@ if __name__ == "__main__":
             "Requires PyTorch >= 2.7 with GDS support."
         )
 
-    TEST_SIZES = [1.0, 2.0, 5.0, 10.0, 20.0, 30.0] 
+    TEST_SIZES = [30.0] # [1.0, 2.0, 5.0, 10.0, 20.0, 30.0] 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     CSV_FILENAME = os.path.join(script_dir, "ML_GDS_SWEEP.csv")
 
