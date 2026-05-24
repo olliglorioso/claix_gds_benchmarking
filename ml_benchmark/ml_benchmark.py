@@ -2,6 +2,7 @@ from tqdm import tqdm
 import torch
 import time
 import os
+import gc
 from torch._subclasses.fake_tensor import FakeTensorMode
 from torch.serialization import skip_data
 from torch.utils.serialization import config as serialization_config
@@ -9,28 +10,68 @@ from torch.utils.serialization import config as serialization_config
 MODEL_SIZE_GB = 50.0
 ITERATIONS = 1
 BEEOND_DIR = os.getenv("BEEOND", ".")
+TENSOR_COUNT = 10
+DTYPE = torch.float32
+DTYPE_BYTES = torch.tensor([], dtype=DTYPE).element_size()
+GDS_ALIGNMENT = 4096
 
 STD_PATH = os.path.join(BEEOND_DIR, "model_std.pt")
 GDS_PATH = os.path.join(BEEOND_DIR, "model_gds.pt")
-serialization_config.save.storage_alignment = 4096
+serialization_config.save.storage_alignment = GDS_ALIGNMENT
 
 
 def create_heavy_model(size_gb):
     """
     Creates a large GPU state_dict approximately equal to size_gb.
+
+    GDS direct I/O is sensitive to aligned offsets and transfer sizes. PyTorch's
+    checkpoint storage alignment handles the offsets; this rounds each tensor's
+    byte size down to a 4 KiB boundary so the transfer lengths are aligned too.
     """
-    total_params = int((size_gb * (1024 ** 3)) / 4)
-    print(f"Creating model with {total_params:,} parameters (~{size_gb} GB)...")
+    target_bytes = int(size_gb * (1024 ** 3))
+    tensor_bytes = target_bytes // TENSOR_COUNT
+    tensor_bytes = (tensor_bytes // GDS_ALIGNMENT) * GDS_ALIGNMENT
+    numel_per_tensor = tensor_bytes // DTYPE_BYTES
+    actual_bytes = tensor_bytes * TENSOR_COUNT
+    actual_gb = bytes_to_gb(actual_bytes)
+
+    print(
+        "Creating model with "
+        f"{numel_per_tensor:,} parameters per tensor "
+        f"({actual_gb:.4f} GiB total, {TENSOR_COUNT} tensors)..."
+    )
 
     model_tensors = {
         f"layer_{i}": torch.randn(
-            total_params // 10,
+            numel_per_tensor,
             device="cuda",
-            dtype=torch.float32,
+            dtype=DTYPE,
         )
-        for i in range(10)
+        for i in range(TENSOR_COUNT)
     }
     return model_tensors
+
+def bytes_to_gb(num_bytes):
+    return num_bytes / (1024 ** 3)
+
+def state_dict_size_gb(state_dict):
+    total_bytes = sum(tensor.untyped_storage().nbytes() for tensor in state_dict.values())
+    return bytes_to_gb(total_bytes)
+
+def check_gds_alignment(state_dict, offsets):
+    for name, tensor in state_dict.items():
+        offset = offsets[name]
+        num_bytes = tensor.untyped_storage().nbytes()
+        if offset % GDS_ALIGNMENT != 0:
+            raise RuntimeError(
+                f"Unaligned checkpoint offset for {name}: {offset} "
+                f"is not divisible by {GDS_ALIGNMENT}"
+            )
+        if num_bytes % GDS_ALIGNMENT != 0:
+            raise RuntimeError(
+                f"Unaligned tensor size for {name}: {num_bytes} bytes "
+                f"is not divisible by {GDS_ALIGNMENT}"
+            )
 
 def get_checkpoint_offsets(path):
     """
@@ -79,6 +120,8 @@ def benchmark_standard(state_dict, path, iterations):
         end = time.time()
         load_times.append(end - start)
         del loaded
+        torch.cuda.empty_cache()
+        gc.collect()
     avg_save = sum(save_times) / len(save_times)
     avg_load = sum(load_times) / len(load_times)
     return avg_save, avg_load
@@ -90,6 +133,7 @@ def benchmark_gds(state_dict, path, iterations):
         torch.save(state_dict, path)
 
     offsets = get_checkpoint_offsets(path)
+    check_gds_alignment(state_dict, offsets)
     save_times = []
     gds_file = torch.cuda.gds.GdsFile(path, os.O_RDWR)
 
@@ -113,12 +157,10 @@ def benchmark_gds(state_dict, path, iterations):
     gds_file = torch.cuda.gds.GdsFile(path, os.O_RDONLY)
     try:
         for _ in tqdm(range(iterations), desc="GDS Load"):
-            # Create empty tensors only
-            with skip_data():
-                loaded_dict = torch.load(
-                    path,
-                    weights_only=True,
-                )
+            loaded_dict = {
+                name: torch.empty_like(tensor)
+                for name, tensor in state_dict.items()
+            }
             torch.cuda.synchronize()
             start = time.time()
             for name, tensor in loaded_dict.items():
@@ -138,6 +180,8 @@ def benchmark_gds(state_dict, path, iterations):
                         f"Mismatch detected in tensor: {k}"
                     )
             del loaded_dict
+            torch.cuda.empty_cache()
+            gc.collect()
     finally:
         del gds_file
 
@@ -196,7 +240,6 @@ def print_results(
 
 if __name__ == "__main__":
     import csv
-    import gc
 
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA not available.")
@@ -207,7 +250,7 @@ if __name__ == "__main__":
             "Requires PyTorch >= 2.7 with GDS support."
         )
 
-    TEST_SIZES = [30.0] # [1.0, 2.0, 5.0, 10.0, 20.0, 30.0] 
+    TEST_SIZES = [1.0, 2.0, 5.0, 10.0, 20.0, 30.0] 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     CSV_FILENAME = os.path.join(script_dir, "ML_GDS_SWEEP.csv")
 
@@ -232,6 +275,7 @@ if __name__ == "__main__":
         # 1. Create a fresh model for this size
         my_model = create_heavy_model(size)
         torch.cuda.synchronize()
+        actual_size_gb = state_dict_size_gb(my_model)
 
         # 2. Execute benchmarks using your defined functions
         # This will run for the number of ITERATIONS defined globally
@@ -249,7 +293,7 @@ if __name__ == "__main__":
 
         # 3. Print results to the console for real-time monitoring
         print_results(
-            size,
+            actual_size_gb,
             std_save_avg,
             std_load_avg,
             gds_save_avg,
@@ -260,11 +304,11 @@ if __name__ == "__main__":
         with open(CSV_FILENAME, mode='a', newline='') as f:
             writer = csv.writer(f)
             writer.writerow([
-                size, 
+                actual_size_gb, 
                 std_save_avg, std_load_avg, 
                 gds_save_avg, gds_load_avg,
-                size / std_save_avg, size / std_load_avg,
-                size / gds_save_avg, size / gds_load_avg
+                actual_size_gb / std_save_avg, actual_size_gb / std_load_avg,
+                actual_size_gb / gds_save_avg, actual_size_gb / gds_load_avg
             ])
 
         # 5. Crucial: Clear VRAM and local storage before the next larger iteration
